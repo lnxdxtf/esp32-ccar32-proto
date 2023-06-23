@@ -1,11 +1,13 @@
+use std::time::Duration;
+
 use embedded_svc::{http::client::Client, io::Write, utils::io};
 use esp_idf_svc::http::client::{Configuration, EspHttpConnection};
 use log::*;
 pub struct HttpClientApp {
     client: Client<EspHttpConnection>,
-    config: Configuration,
 }
 
+#[allow(unused)]
 #[derive(Debug)]
 pub enum HttpClientMethods {
     GET,
@@ -16,19 +18,21 @@ pub enum HttpClientMethods {
 
 impl HttpClientApp {
     pub fn new() -> HttpClientApp {
-        let config = Configuration::default();
+        let mut config = Configuration::default();
+        config.timeout = Some(Duration::from_secs(5));
         let client = Client::wrap(EspHttpConnection::new(&config).unwrap());
-        HttpClientApp { client, config }
+        HttpClientApp { client }
     }
-    fn create_header<'a>(&self, headers: Option<Vec<(&'a str, &'a str)>>) -> Vec<(&'a str, &'a str)> {
+    fn create_header<'a>(
+        &self,
+        headers: Option<Vec<(&'a str, &'a str)>>,
+    ) -> Vec<(&'a str, &'a str)> {
         let mut headers_content = vec![("accept", "*"), ("content-type", "*")];
         if let Some(headers) = headers {
             headers_content.extend(headers);
         }
         headers_content
     }
-    
-    
 
     pub fn request(
         &mut self,
@@ -36,8 +40,8 @@ impl HttpClientApp {
         url: &str,
         headers: Option<Vec<(&str, &str)>>,
         payload: Option<&[u8]>,
+        wait_response: bool,
     ) -> anyhow::Result<()> {
-
         let headers = self.create_header(headers);
 
         let mut request = match method {
@@ -55,21 +59,28 @@ impl HttpClientApp {
 
         request.flush()?;
         info!("-> {:?} {}", method, url);
-        let mut response = request.submit()?;
-        let status = response.status();
-        info!("<- {}", status);
-        let (_headers, mut body) = response.split();
-        let mut buf = [0u8; 1024];
-        let bytes_read = io::try_read_full(&mut body, &mut buf).map_err(|e| e.0)?;
-        info!("Read {} bytes", bytes_read);
-        match std::str::from_utf8(&buf[0..bytes_read]) {
-            Ok(body_string) => info!(
-                "Response body (truncated to {} bytes): {:?}",
-                buf.len(),
-                body_string
-            ),
-            Err(e) => error!("Error decoding response body: {}", e),
-        };
+        match request.submit() {
+            Ok(mut response) => {
+                let status = response.status();
+                if wait_response {
+                    info!("<- {}", status);
+                    let (_headers, mut body) = response.split();
+                    let mut buf = [0u8; 1024];
+                    let bytes_read = io::try_read_full(&mut body, &mut buf).map_err(|e| e.0)?;
+                    info!("Read {} bytes", bytes_read);
+                    match std::str::from_utf8(&buf[0..bytes_read]) {
+                        Ok(body_string) => info!(
+                            "Response body (truncated to {} bytes): {:?}",
+                            buf.len(),
+                            body_string
+                        ),
+                        Err(e) => error!("Error decoding response body: {}", e),
+                    };
+                }
+            }
+            Err(err) => error!("ERROR REQUEST - {:?}", err),
+        }
+
         Ok(())
     }
 }

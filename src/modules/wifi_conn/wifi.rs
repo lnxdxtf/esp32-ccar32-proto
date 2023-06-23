@@ -8,42 +8,58 @@ use esp_idf_svc::{
 };
 use log::*;
 
-const SSID: &'static str = "dlink-11FD";
-const PASSWORD: &'static str = "tvwnf86836";
+const SSID: &'static str = "";
+const PASSWORD: &'static str = "";
 
-pub fn wifi() -> anyhow::Result<BlockingWifi<EspWifi<'static>>> {
-    info!("SETUP WIFI...");
-    let peripherals = Peripherals::take().unwrap();
-    let sys_loop = EspSystemEventLoop::take()?;
-    let nvs = EspDefaultNvsPartition::take()?;
-
-    let mut wifi = BlockingWifi::wrap(
-        EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs))?,
-        sys_loop,
-    )?;
-    Ok(wifi)
+pub struct WifiApp {
+    pub wifi: BlockingWifi<EspWifi<'static>>,
 }
 
-pub fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()> {
-    info!("CONNECTING WIFI...");
-    let wifi_configuration: Configuration = Configuration::Client(ClientConfiguration {
-        ssid: SSID.into(),
-        bssid: None,
-        auth_method: AuthMethod::WPA2Personal,
-        password: PASSWORD.into(),
-        channel: None,
-    });
+impl WifiApp {
+    pub fn new() -> WifiApp {
+        info!("SETUP WIFI...");
+        let peripherals = Peripherals::take().unwrap();
+        let sys_loop = EspSystemEventLoop::take().unwrap();
+        let nvs = EspDefaultNvsPartition::take().unwrap();
+        let mut wifi = BlockingWifi::wrap(
+            EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs)).unwrap(),
+            sys_loop,
+        )
+        .unwrap();
+        WifiApp { wifi }
+    }
 
-    wifi.set_configuration(&wifi_configuration)?;
+    pub fn connect(&mut self) -> anyhow::Result<()> {
+        info!("CONNECTING WIFI...");
+        let wifi_configuration: Configuration = Configuration::Client(ClientConfiguration {
+            ssid: SSID.into(),
+            password: PASSWORD.into(),
+            bssid: None,
+            auth_method: AuthMethod::WPA2Personal,
+            channel: None,
+        });
 
-    wifi.start()?;
-    info!("Wifi started");
+        self.wifi.set_configuration(&wifi_configuration)?;
 
-    wifi.connect()?;
-    info!("Wifi connected");
+        self.wifi.start()?;
+        info!("Wifi started");
 
-    wifi.wait_netif_up()?;
-    info!("Wifi netif up");
+        info!("SCANNING WIFI...");
+        match self.wifi.scan() {
+            Ok(aps) => {
+                for ap in aps {
+                    info!("AP: {:?}", ap);
+                }
+            }
+            Err(e) => error!("ERROR SCANNING WIFI - {:?}", e),
+        }
 
-    Ok(())
+        self.wifi.connect()?;
+        info!("Wifi connected");
+
+        self.wifi.wait_netif_up()?;
+        info!("Wifi netif up");
+
+        Ok(())
+    }
 }
